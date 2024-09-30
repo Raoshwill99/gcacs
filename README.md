@@ -103,10 +103,10 @@ This allows the governance system to adapt to changing needs and observed behavi
 
 1. Initial implementation (completed)
 2. Enhanced anti-corruption mechanisms (current stage)
-3. User interface for easy interaction with the governance system
-4. Integration with external data sources for additional reputation factors
-5. Advanced analytics for detecting suspicious voting patterns
-6. Multi-signature governance upgrades
+3. Integration with external data sources for additional reputation factors
+4. Advanced analytics for detecting suspicious voting patterns
+5. Multi-signature governance upgrades
+6. User interface for easy interaction with the governance system.
 
 ## Contributing
 

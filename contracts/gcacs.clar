@@ -1,9 +1,11 @@
-;; Governance Contract with Anti-Corruption Safeguards
+;; Governance Contract with Enhanced Anti-Corruption Safeguards
 
 ;; Define constants
 (define-constant CONTRACT_OWNER tx-sender)
 (define-constant VOTING_PERIOD u144) ;; ~1 day in Stacks blocks
 (define-constant MIN_PROPOSAL_THRESHOLD u100000000) ;; 100 STX
+(define-constant MAX_VOTING_POWER u1000000) ;; Maximum voting power (1 million)
+(define-constant REPUTATION_FACTOR u100) ;; Reputation factor for voting power calculation
 
 ;; Define data maps
 (define-map proposals
@@ -22,7 +24,12 @@
 
 (define-map votes
   { proposal-id: uint, voter: principal }
-  { vote: (string-ascii 3) }
+  { vote: (string-ascii 3), weight: uint }
+)
+
+(define-map user-reputation
+  { user: principal }
+  { reputation-score: uint, last-action-block: uint }
 )
 
 ;; Define variables
@@ -35,6 +42,51 @@
 
 (define-read-only (get-vote (proposal-id uint) (voter principal))
   (map-get? votes { proposal-id: proposal-id, voter: voter })
+)
+
+(define-read-only (get-reputation (user principal))
+  (default-to
+    { reputation-score: u100, last-action-block: u0 }
+    (map-get? user-reputation { user: user })
+  )
+)
+
+;; Reputation management functions
+(define-private (update-reputation (user principal) (action-type (string-ascii 10)))
+  (let
+    (
+      (current-reputation (get-reputation user))
+      (reputation-change (if (is-eq action-type "proposal")
+                            u10
+                            (if (is-eq action-type "vote")
+                              u5
+                              u0)))
+      (new-score (+ (get reputation-score current-reputation) reputation-change))
+    )
+    (map-set user-reputation
+      { user: user }
+      {
+        reputation-score: (min new-score u1000),
+        last-action-block: block-height
+      }
+    )
+  )
+)
+
+;; Anti-corruption functions
+(define-private (calculate-voting-power (voter principal))
+  (let
+    (
+      (reputation (get-reputation voter))
+      (stx-balance (stx-get-balance voter))
+      (raw-voting-power (/ (* stx-balance (get reputation-score reputation)) REPUTATION_FACTOR))
+    )
+    (min raw-voting-power MAX_VOTING_POWER)
+  )
+)
+
+(define-read-only (check-voting-power (voter principal))
+  (ok (calculate-voting-power voter))
 )
 
 ;; Core functions
@@ -60,6 +112,7 @@
       }
     )
     (var-set proposal-count proposal-id)
+    (update-reputation tx-sender "proposal")
     (ok proposal-id)
   )
 )
@@ -69,6 +122,7 @@
     (
       (proposal (unwrap! (get-proposal proposal-id) (err u2)))
       (current-block block-height)
+      (voting-power (calculate-voting-power tx-sender))
     )
     (asserts! (and (>= current-block (get start-block proposal)) (< current-block (get end-block proposal))) (err u3))
     (asserts! (is-none (get-vote proposal-id tx-sender)) (err u4))
@@ -76,20 +130,21 @@
     
     (map-set votes
       { proposal-id: proposal-id, voter: tx-sender }
-      { vote: vote-type }
+      { vote: vote-type, weight: voting-power }
     )
     
     (if (is-eq vote-type "yes")
       (map-set proposals
         { proposal-id: proposal-id }
-        (merge proposal { yes-votes: (+ (get yes-votes proposal) u1) })
+        (merge proposal { yes-votes: (+ (get yes-votes proposal) voting-power) })
       )
       (map-set proposals
         { proposal-id: proposal-id }
-        (merge proposal { no-votes: (+ (get no-votes proposal) u1) })
+        (merge proposal { no-votes: (+ (get no-votes proposal) voting-power) })
       )
     )
     
+    (update-reputation tx-sender "vote")
     (ok true)
   )
 )
@@ -118,15 +173,30 @@
   )
 )
 
-;; Anti-corruption function (initial implementation)
-(define-read-only (check-voting-power (voter principal))
-  (let
-    (
-      (total-votes u0)
-      (vote-weight u0)
+;; Governance parameters update function
+(define-public (update-governance-params 
+  (new-voting-period (optional uint))
+  (new-min-proposal-threshold (optional uint))
+  (new-max-voting-power (optional uint))
+  (new-reputation-factor (optional uint)))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) (err u8))
+    (if (is-some new-voting-period)
+      (var-set VOTING_PERIOD (unwrap! new-voting-period (err u9)))
+      true
     )
-    ;; TODO: Implement logic to analyze voting patterns and detect potential manipulation
-    ;; This is a placeholder implementation
-    (ok { total-votes: total-votes, vote-weight: vote-weight })
+    (if (is-some new-min-proposal-threshold)
+      (var-set MIN_PROPOSAL_THRESHOLD (unwrap! new-min-proposal-threshold (err u10)))
+      true
+    )
+    (if (is-some new-max-voting-power)
+      (var-set MAX_VOTING_POWER (unwrap! new-max-voting-power (err u11)))
+      true
+    )
+    (if (is-some new-reputation-factor)
+      (var-set REPUTATION_FACTOR (unwrap! new-reputation-factor (err u12)))
+      true
+    )
+    (ok true)
   )
 )

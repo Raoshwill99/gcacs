@@ -106,7 +106,7 @@ This allows the governance system to adapt to changing needs and observed behavi
 3. Integration with external data sources for additional reputation factors
 4. Advanced analytics for detecting suspicious voting patterns
 5. Multi-signature governance upgrades
-6. User interface for easy interaction with the governance system
+6. User interface for easy interaction with the governance system.
 
 ## Contributing
 

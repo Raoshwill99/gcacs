@@ -1,4 +1,4 @@
-;; Governance Contract with Enhanced Anti-Corruption Safeguards
+;; Governance Contract with Advanced Analytics for Suspicious Voting Detection
 
 ;; Define constants
 (define-constant CONTRACT_OWNER tx-sender)
@@ -6,6 +6,7 @@
 (define-constant MIN_PROPOSAL_THRESHOLD u100000000) ;; 100 STX
 (define-constant MAX_VOTING_POWER u1000000) ;; Maximum voting power (1 million)
 (define-constant REPUTATION_FACTOR u100) ;; Reputation factor for voting power calculation
+(define-constant SUSPICIOUS_VOTE_THRESHOLD u0.8) ;; 80% similarity threshold for suspicious votes
 
 ;; Define data maps
 (define-map proposals
@@ -24,12 +25,17 @@
 
 (define-map votes
   { proposal-id: uint, voter: principal }
-  { vote: (string-ascii 3), weight: uint }
+  { vote: (string-ascii 3), weight: uint, timestamp: uint }
 )
 
 (define-map user-reputation
   { user: principal }
   { reputation-score: uint, last-action-block: uint }
+)
+
+(define-map voting-patterns
+  { user: principal }
+  { total-votes: uint, agreement-count: uint }
 )
 
 ;; Define variables
@@ -89,6 +95,44 @@
   (ok (calculate-voting-power voter))
 )
 
+;; Advanced analytics functions
+(define-private (update-voting-pattern (voter principal) (vote-type (string-ascii 3)))
+  (let
+    (
+      (current-pattern (default-to { total-votes: u0, agreement-count: u0 }
+                                   (map-get? voting-patterns { user: voter })))
+      (new-total (+ (get total-votes current-pattern) u1))
+      (new-agreement (if (is-eq vote-type "yes")
+                         (+ (get agreement-count current-pattern) u1)
+                         (get agreement-count current-pattern)))
+    )
+    (map-set voting-patterns
+      { user: voter }
+      { total-votes: new-total, agreement-count: new-agreement }
+    )
+  )
+)
+
+(define-read-only (get-voting-similarity (voter-a principal) (voter-b principal))
+  (let
+    (
+      (pattern-a (default-to { total-votes: u0, agreement-count: u0 }
+                             (map-get? voting-patterns { user: voter-a })))
+      (pattern-b (default-to { total-votes: u0, agreement-count: u0 }
+                             (map-get? voting-patterns { user: voter-b })))
+      (total-votes (min (get total-votes pattern-a) (get total-votes pattern-b)))
+      (agreements (abs (- (get agreement-count pattern-a) (get agreement-count pattern-b))))
+    )
+    (if (> total-votes u0)
+      (/ agreements total-votes)
+      u0)
+  )
+)
+
+(define-read-only (check-suspicious-similarity (voter-a principal) (voter-b principal))
+  (>= (get-voting-similarity voter-a voter-b) SUSPICIOUS_VOTE_THRESHOLD)
+)
+
 ;; Core functions
 (define-public (create-proposal (title (string-ascii 50)) (description (string-utf8 500)))
   (let
@@ -130,7 +174,7 @@
     
     (map-set votes
       { proposal-id: proposal-id, voter: tx-sender }
-      { vote: vote-type, weight: voting-power }
+      { vote: vote-type, weight: voting-power, timestamp: block-height }
     )
     
     (if (is-eq vote-type "yes")
@@ -145,6 +189,7 @@
     )
     
     (update-reputation tx-sender "vote")
+    (update-voting-pattern tx-sender vote-type)
     (ok true)
   )
 )
@@ -178,7 +223,8 @@
   (new-voting-period (optional uint))
   (new-min-proposal-threshold (optional uint))
   (new-max-voting-power (optional uint))
-  (new-reputation-factor (optional uint)))
+  (new-reputation-factor (optional uint))
+  (new-suspicious-vote-threshold (optional uint)))
   (begin
     (asserts! (is-eq tx-sender CONTRACT_OWNER) (err u8))
     (if (is-some new-voting-period)
@@ -195,6 +241,10 @@
     )
     (if (is-some new-reputation-factor)
       (var-set REPUTATION_FACTOR (unwrap! new-reputation-factor (err u12)))
+      true
+    )
+    (if (is-some new-suspicious-vote-threshold)
+      (var-set SUSPICIOUS_VOTE_THRESHOLD (unwrap! new-suspicious-vote-threshold (err u13)))
       true
     )
     (ok true)

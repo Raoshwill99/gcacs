@@ -1,4 +1,4 @@
-;; Governance Contract with Advanced Analytics for Suspicious Voting Detection
+;; Governance Contract with Multi-Signature Upgrades
 
 ;; Define constants
 (define-constant CONTRACT_OWNER tx-sender)
@@ -7,6 +7,7 @@
 (define-constant MAX_VOTING_POWER u1000000) ;; Maximum voting power (1 million)
 (define-constant REPUTATION_FACTOR u100) ;; Reputation factor for voting power calculation
 (define-constant SUSPICIOUS_VOTE_THRESHOLD u0.8) ;; 80% similarity threshold for suspicious votes
+(define-constant REQUIRED_SIGNATURES u3) ;; Number of signatures required for upgrades
 
 ;; Define data maps
 (define-map proposals
@@ -38,8 +39,23 @@
   { total-votes: uint, agreement-count: uint }
 )
 
+(define-map signers 
+  { signer: principal } 
+  { is-signer: bool }
+)
+
+(define-map upgrade-proposals
+  { proposal-id: uint }
+  {
+    new-contract-address: principal,
+    signatures: (list 10 principal),
+    status: (string-ascii 10)
+  }
+)
+
 ;; Define variables
 (define-data-var proposal-count uint u0)
+(define-data-var upgrade-proposal-count uint u0)
 
 ;; Helper functions
 (define-read-only (get-proposal (proposal-id uint))
@@ -55,6 +71,10 @@
     { reputation-score: u100, last-action-block: u0 }
     (map-get? user-reputation { user: user })
   )
+)
+
+(define-read-only (is-signer (account principal))
+  (default-to false (get is-signer (map-get? signers { signer: account })))
 )
 
 ;; Reputation management functions
@@ -218,6 +238,67 @@
   )
 )
 
+;; Multi-signature upgrade functions
+(define-public (propose-upgrade (new-contract-address principal))
+  (let
+    (
+      (proposal-id (+ (var-get upgrade-proposal-count) u1))
+    )
+    (asserts! (is-signer tx-sender) (err u8))
+    (map-set upgrade-proposals
+      { proposal-id: proposal-id }
+      {
+        new-contract-address: new-contract-address,
+        signatures: (list tx-sender),
+        status: "active"
+      }
+    )
+    (var-set upgrade-proposal-count proposal-id)
+    (ok proposal-id)
+  )
+)
+
+(define-public (sign-upgrade-proposal (proposal-id uint))
+  (let
+    (
+      (proposal (unwrap! (map-get? upgrade-proposals { proposal-id: proposal-id }) (err u9)))
+      (current-signatures (get signatures proposal))
+    )
+    (asserts! (is-signer tx-sender) (err u8))
+    (asserts! (is-none (index-of current-signatures tx-sender)) (err u10))
+    (asserts! (is-eq (get status proposal) "active") (err u11))
+    
+    (map-set upgrade-proposals
+      { proposal-id: proposal-id }
+      (merge proposal 
+        { signatures: (unwrap! (as-max-len? (append current-signatures tx-sender) u10) (err u12)) }
+      )
+    )
+    (ok true)
+  )
+)
+
+(define-public (finalize-upgrade (proposal-id uint))
+  (let
+    (
+      (proposal (unwrap! (map-get? upgrade-proposals { proposal-id: proposal-id }) (err u9)))
+      (signatures (get signatures proposal))
+    )
+    (asserts! (is-signer tx-sender) (err u8))
+    (asserts! (is-eq (get status proposal) "active") (err u11))
+    (asserts! (>= (len signatures) REQUIRED_SIGNATURES) (err u13))
+    
+    (map-set upgrade-proposals
+      { proposal-id: proposal-id }
+      (merge proposal { status: "executed" })
+    )
+    
+    ;; Here we would typically call a function to upgrade the contract
+    ;; For demonstration, we'll just return success
+    (ok true)
+  )
+)
+
 ;; Governance parameters update function
 (define-public (update-governance-params 
   (new-voting-period (optional uint))
@@ -226,27 +307,44 @@
   (new-reputation-factor (optional uint))
   (new-suspicious-vote-threshold (optional uint)))
   (begin
-    (asserts! (is-eq tx-sender CONTRACT_OWNER) (err u8))
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) (err u14))
     (if (is-some new-voting-period)
-      (var-set VOTING_PERIOD (unwrap! new-voting-period (err u9)))
+      (var-set VOTING_PERIOD (unwrap! new-voting-period (err u15)))
       true
     )
     (if (is-some new-min-proposal-threshold)
-      (var-set MIN_PROPOSAL_THRESHOLD (unwrap! new-min-proposal-threshold (err u10)))
+      (var-set MIN_PROPOSAL_THRESHOLD (unwrap! new-min-proposal-threshold (err u16)))
       true
     )
     (if (is-some new-max-voting-power)
-      (var-set MAX_VOTING_POWER (unwrap! new-max-voting-power (err u11)))
+      (var-set MAX_VOTING_POWER (unwrap! new-max-voting-power (err u17)))
       true
     )
     (if (is-some new-reputation-factor)
-      (var-set REPUTATION_FACTOR (unwrap! new-reputation-factor (err u12)))
+      (var-set REPUTATION_FACTOR (unwrap! new-reputation-factor (err u18)))
       true
     )
     (if (is-some new-suspicious-vote-threshold)
-      (var-set SUSPICIOUS_VOTE_THRESHOLD (unwrap! new-suspicious-vote-threshold (err u13)))
+      (var-set SUSPICIOUS_VOTE_THRESHOLD (unwrap! new-suspicious-vote-threshold (err u19)))
       true
     )
+    (ok true)
+  )
+)
+
+;; Signer management functions
+(define-public (add-signer (new-signer principal))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) (err u14))
+    (map-set signers { signer: new-signer } { is-signer: true })
+    (ok true)
+  )
+)
+
+(define-public (remove-signer (signer-to-remove principal))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) (err u14))
+    (map-set signers { signer: signer-to-remove } { is-signer: false })
     (ok true)
   )
 )
